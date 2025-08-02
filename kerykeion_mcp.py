@@ -161,7 +161,7 @@ def create_astrological_subject(name, year, month, day, hour, minute, city, nati
                     raise Exception(f"无法找到城市 '{city}' 的地理信息。请提供经纬度坐标或检查城市名称是否正确。原始错误: {error_msg}")
             
             # 使用 Kerykeion 内置的 JSON 序列化功能
-            astrological_data = subject.json(dump=False)
+            astrological_data = subject.json()
             
         finally:
             # 恢复原始工作目录
@@ -224,7 +224,25 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
     Returns:
         dict: 包含相位信息的字典
     """
+    # 保存原始工作目录
+    original_cwd = os.getcwd()
+    temp_dir = None
+    
     try:
+        # 创建临时目录并设置为工作目录
+        temp_dir = tempfile.mkdtemp(prefix="kerykeion_natal_")
+        os.chdir(temp_dir)
+        
+        # 如果没有提供经纬度，尝试从本地数据库查找
+        if longitude is None or latitude is None:
+            coords = find_city_coordinates(city, nation)
+            if coords:
+                longitude, latitude = coords
+        
+        # 为中国城市设置默认时区
+        if nation == 'CN' and not tz_str:
+            tz_str = 'Asia/Shanghai'
+        
         # 创建占星主体对象
         if longitude is not None and latitude is not None:
             if tz_str:
@@ -243,11 +261,11 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
             )
         
         # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
-        astrological_data = subject.json(dump=False)
+        astrological_data = subject.json()
         
         # 获取本命相位
         natal_aspects = NatalAspects(subject)
-        all_aspects = natal_aspects.get_all_aspects()
+        all_aspects = natal_aspects.all_aspects
         
         result = {
             "input": {
@@ -270,7 +288,24 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
         
         return {"success": True, "data": result}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        error_msg = str(e) if e and str(e) else "发生未知错误"
+        error_details = {
+            "error_message": error_msg,
+            "error_type": type(e).__name__,
+            "traceback": traceback.format_exc()
+        }
+        return {"success": False, "error": error_msg, "debug_info": error_details}
+    finally:
+        # 恢复原始工作目录
+        os.chdir(original_cwd)
+        # 清理临时目录
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                import shutil
+                shutil.rmtree(temp_dir)
+            except:
+                pass
 
 
 def get_synastry_aspects(person1_data, person2_data):
@@ -284,64 +319,123 @@ def get_synastry_aspects(person1_data, person2_data):
         dict: 包含合盘相位信息的字典
     """
     try:
-        # 创建第一个人的占星主体对象
-        p1 = person1_data
-        if p1.get('longitude') is not None and p1.get('latitude') is not None:
-            if p1.get('tz_str'):
-                subject1 = AstrologicalSubject(
-                    p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
-                    lng=p1['longitude'], lat=p1['latitude'], tz_str=p1['tz_str'], city=p1['city']
-                )
+        # 设置临时工作目录，避免缓存问题
+        original_cwd = os.getcwd()
+        temp_dir = None
+        
+        try:
+            # 创建临时工作目录
+            temp_dir = tempfile.mkdtemp(prefix="kerykeion_synastry_")
+            os.chdir(temp_dir)
+            
+            # 为中国城市设置默认时区
+            p1 = person1_data.copy()
+            p2 = person2_data.copy()
+            
+            if p1.get('nation') == 'CN' and not p1.get('tz_str'):
+                p1['tz_str'] = 'Asia/Shanghai'
+            if p2.get('nation') == 'CN' and not p2.get('tz_str'):
+                p2['tz_str'] = 'Asia/Shanghai'
+            
+            # 创建第一个人的占星主体对象
+            if p1.get('longitude') is not None and p1.get('latitude') is not None:
+                if p1.get('tz_str'):
+                    subject1 = AstrologicalSubject(
+                        p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                        lng=p1['longitude'], lat=p1['latitude'], tz_str=p1['tz_str'], city=p1.get('city', '')
+                    )
+                else:
+                    subject1 = AstrologicalSubject(
+                        p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                        lng=p1['longitude'], lat=p1['latitude'], city=p1.get('city', '')
+                    )
             else:
-                subject1 = AstrologicalSubject(
-                    p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
-                    lng=p1['longitude'], lat=p1['latitude'], city=p1['city']
-                )
-        else:
-            subject1 = AstrologicalSubject(
-                p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
-                p1['city'], p1['nation']
-            )
-        
-        # 创建第二个人的占星主体对象
-        p2 = person2_data
-        if p2.get('longitude') is not None and p2.get('latitude') is not None:
-            if p2.get('tz_str'):
-                subject2 = AstrologicalSubject(
-                    p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
-                    lng=p2['longitude'], lat=p2['latitude'], tz_str=p2['tz_str'], city=p2['city']
-                )
+                # 尝试从本地数据库查找城市坐标
+                found_lat, found_lng = find_city_coordinates(p1.get('city', ''), p1.get('nation', ''))
+                if found_lat is not None and found_lng is not None:
+                    if p1.get('tz_str'):
+                        subject1 = AstrologicalSubject(
+                            p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                            lng=found_lng, lat=found_lat, tz_str=p1['tz_str'], city=p1.get('city', '')
+                        )
+                    else:
+                        subject1 = AstrologicalSubject(
+                            p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                            lng=found_lng, lat=found_lat, city=p1.get('city', '')
+                        )
+                else:
+                    subject1 = AstrologicalSubject(
+                        p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                        p1.get('city', ''), p1.get('nation', '')
+                    )
+            
+            # 创建第二个人的占星主体对象
+            if p2.get('longitude') is not None and p2.get('latitude') is not None:
+                if p2.get('tz_str'):
+                    subject2 = AstrologicalSubject(
+                        p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                        lng=p2['longitude'], lat=p2['latitude'], tz_str=p2['tz_str'], city=p2.get('city', '')
+                    )
+                else:
+                    subject2 = AstrologicalSubject(
+                        p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                        lng=p2['longitude'], lat=p2['latitude'], city=p2.get('city', '')
+                    )
             else:
-                subject2 = AstrologicalSubject(
-                    p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
-                    lng=p2['longitude'], lat=p2['latitude'], city=p2['city']
-                )
-        else:
-            subject2 = AstrologicalSubject(
-                p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
-                p2['city'], p2['nation']
-            )
+                # 尝试从本地数据库查找城市坐标
+                found_lat, found_lng = find_city_coordinates(p2.get('city', ''), p2.get('nation', ''))
+                if found_lat is not None and found_lng is not None:
+                    if p2.get('tz_str'):
+                        subject2 = AstrologicalSubject(
+                            p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                            lng=found_lng, lat=found_lat, tz_str=p2['tz_str'], city=p2.get('city', '')
+                        )
+                    else:
+                        subject2 = AstrologicalSubject(
+                            p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                            lng=found_lng, lat=found_lat, city=p2.get('city', '')
+                        )
+                else:
+                    subject2 = AstrologicalSubject(
+                        p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                        p2.get('city', ''), p2.get('nation', '')
+                    )
         
-        # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
-        person1_astrological_data = subject1.json(dump=False)
-        person2_astrological_data = subject2.json(dump=False)
+            # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
+            person1_astrological_data = subject1.json()
+            person2_astrological_data = subject2.json()
+            
+            # 获取合盘相位
+            synastry_aspects = SynastryAspects(subject1, subject2)
+            relevant_aspects = synastry_aspects.relevant_aspects
+            
+            result = {
+                "person1_input": person1_data,
+                "person2_input": person2_data,
+                "person1_astrological_data": person1_astrological_data,
+                "person2_astrological_data": person2_astrological_data,
+                "aspects_count": len(relevant_aspects),
+                "aspects": relevant_aspects
+            }
+            
+            return {"success": True, "data": result}
         
-        # 获取合盘相位
-        synastry_aspects = SynastryAspects(subject1, subject2)
-        relevant_aspects = synastry_aspects.get_relevant_aspects()
-        
-        result = {
-            "person1_input": person1_data,
-            "person2_input": person2_data,
-            "person1_astrological_data": person1_astrological_data,
-            "person2_astrological_data": person2_astrological_data,
-            "aspects_count": len(relevant_aspects),
-            "aspects": relevant_aspects
-        }
-        
-        return {"success": True, "data": result}
+        finally:
+            # 恢复原始工作目录并清理临时目录
+            os.chdir(original_cwd)
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+    
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        error_msg = str(e) if e and str(e) else "发生未知错误"
+        error_details = {
+            "error_message": error_msg,
+            "error_type": type(e).__name__ if e else "Unknown",
+            "traceback": traceback.format_exc()
+        }
+        return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
 def create_composite_chart(person1_data, person2_data):
@@ -355,65 +449,124 @@ def create_composite_chart(person1_data, person2_data):
         dict: 包含组合盘信息的字典
     """
     try:
-        # 创建第一个人的占星主体对象
-        p1 = person1_data
-        if p1.get('longitude') is not None and p1.get('latitude') is not None:
-            if p1.get('tz_str'):
-                subject1 = AstrologicalSubject(
-                    p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
-                    lng=p1['longitude'], lat=p1['latitude'], tz_str=p1['tz_str'], city=p1['city']
-                )
+        # 设置临时工作目录，避免缓存问题
+        original_cwd = os.getcwd()
+        temp_dir = None
+        
+        try:
+            # 创建临时工作目录
+            temp_dir = tempfile.mkdtemp(prefix="kerykeion_composite_")
+            os.chdir(temp_dir)
+            
+            # 为中国城市设置默认时区
+            p1 = person1_data.copy()
+            p2 = person2_data.copy()
+            
+            if p1.get('nation') == 'CN' and not p1.get('tz_str'):
+                p1['tz_str'] = 'Asia/Shanghai'
+            if p2.get('nation') == 'CN' and not p2.get('tz_str'):
+                p2['tz_str'] = 'Asia/Shanghai'
+            
+            # 创建第一个人的占星主体对象
+            if p1.get('longitude') is not None and p1.get('latitude') is not None:
+                if p1.get('tz_str'):
+                    subject1 = AstrologicalSubject(
+                        p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                        lng=p1['longitude'], lat=p1['latitude'], tz_str=p1['tz_str'], city=p1.get('city', '')
+                    )
+                else:
+                    subject1 = AstrologicalSubject(
+                        p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                        lng=p1['longitude'], lat=p1['latitude'], city=p1.get('city', '')
+                    )
             else:
-                subject1 = AstrologicalSubject(
-                    p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
-                    lng=p1['longitude'], lat=p1['latitude'], city=p1['city']
-                )
-        else:
-            subject1 = AstrologicalSubject(
-                p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
-                p1['city'], p1['nation']
-            )
-        
-        # 创建第二个人的占星主体对象
-        p2 = person2_data
-        if p2.get('longitude') is not None and p2.get('latitude') is not None:
-            if p2.get('tz_str'):
-                subject2 = AstrologicalSubject(
-                    p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
-                    lng=p2['longitude'], lat=p2['latitude'], tz_str=p2['tz_str'], city=p2['city']
-                )
+                # 尝试从本地数据库查找城市坐标
+                found_lat, found_lng = find_city_coordinates(p1.get('city', ''), p1.get('nation', ''))
+                if found_lat is not None and found_lng is not None:
+                    if p1.get('tz_str'):
+                        subject1 = AstrologicalSubject(
+                            p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                            lng=found_lng, lat=found_lat, tz_str=p1['tz_str'], city=p1.get('city', '')
+                        )
+                    else:
+                        subject1 = AstrologicalSubject(
+                            p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                            lng=found_lng, lat=found_lat, city=p1.get('city', '')
+                        )
+                else:
+                    subject1 = AstrologicalSubject(
+                        p1['name'], p1['year'], p1['month'], p1['day'], p1['hour'], p1['minute'],
+                        p1.get('city', ''), p1.get('nation', '')
+                    )
+            
+            # 创建第二个人的占星主体对象
+            if p2.get('longitude') is not None and p2.get('latitude') is not None:
+                if p2.get('tz_str'):
+                    subject2 = AstrologicalSubject(
+                        p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                        lng=p2['longitude'], lat=p2['latitude'], tz_str=p2['tz_str'], city=p2.get('city', '')
+                    )
+                else:
+                    subject2 = AstrologicalSubject(
+                        p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                        lng=p2['longitude'], lat=p2['latitude'], city=p2.get('city', '')
+                    )
             else:
-                subject2 = AstrologicalSubject(
-                    p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
-                    lng=p2['longitude'], lat=p2['latitude'], city=p2['city']
-                )
-        else:
-            subject2 = AstrologicalSubject(
-                p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
-                p2['city'], p2['nation']
-            )
+                # 尝试从本地数据库查找城市坐标
+                found_lat, found_lng = find_city_coordinates(p2.get('city', ''), p2.get('nation', ''))
+                if found_lat is not None and found_lng is not None:
+                    if p2.get('tz_str'):
+                        subject2 = AstrologicalSubject(
+                            p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                            lng=found_lng, lat=found_lat, tz_str=p2['tz_str'], city=p2.get('city', '')
+                        )
+                    else:
+                        subject2 = AstrologicalSubject(
+                            p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                            lng=found_lng, lat=found_lat, city=p2.get('city', '')
+                        )
+                else:
+                    subject2 = AstrologicalSubject(
+                        p2['name'], p2['year'], p2['month'], p2['day'], p2['hour'], p2['minute'],
+                        p2.get('city', ''), p2.get('nation', '')
+                    )
         
-        # 创建组合盘工厂
-        factory = CompositeSubjectFactory(subject1, subject2)
-        composite_model = factory.get_midpoint_composite_subject_model()
+            # 创建组合盘工厂
+            factory = CompositeSubjectFactory(subject1, subject2)
+            composite_model = factory.get_midpoint_composite_subject_model()
+            
+            # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
+            person1_astrological_data = subject1.json()
+            person2_astrological_data = subject2.json()
+            composite_astrological_data = composite_model.json()
+            
+            result = {
+                "person1_input": person1_data,
+                "person2_input": person2_data,
+                "person1_astrological_data": person1_astrological_data,
+                "person2_astrological_data": person2_astrological_data,
+                "composite_name": f"{subject1.name} & {subject2.name} Composite",
+                "composite_astrological_data": composite_astrological_data
+            }
+            
+            return {"success": True, "data": result}
         
-        # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
-        person1_astrological_data = subject1.json(dump=False)
-        person2_astrological_data = subject2.json(dump=False)
-        composite_astrological_data = composite_model.json(dump=False)
-        
-        result = {
-            "person1_input": person1_data,
-            "person2_input": person2_data,
-            "person1_astrological_data": person1_astrological_data,
-            "person2_astrological_data": person2_astrological_data,
-            "composite_name": f"{subject1.name} & {subject2.name} Composite",
-            "composite_astrological_data": composite_astrological_data
-        }
-        
-        return {"success": True, "data": result}
+        finally:
+            # 恢复原始工作目录并清理临时目录
+            os.chdir(original_cwd)
+            if temp_dir and os.path.exists(temp_dir):
+                import shutil
+                shutil.rmtree(temp_dir, ignore_errors=True)
+    
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        error_msg = str(e) if e and str(e) else "发生未知错误"
+        error_details = {
+            "error_message": error_msg,
+            "error_type": type(e).__name__ if e else "Unknown",
+            "traceback": traceback.format_exc()
+        }
+        return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
 def generate_report(name, year, month, day, hour, minute, city, nation,
@@ -455,7 +608,7 @@ def generate_report(name, year, month, day, hour, minute, city, nation,
             )
         
         # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
-        astrological_data = subject.json(dump=False)
+        astrological_data = subject.json()
         
         # 生成报告（Report 主要用于打印格式化报告）
         report = Report(subject)
