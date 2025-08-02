@@ -7,6 +7,7 @@ Kerykeion 占星 MCP 工具
 import json
 import sys
 import os
+import tempfile
 from datetime import datetime
 
 try:
@@ -17,6 +18,18 @@ try:
 except ImportError:
     print("错误: 请先安装 kerykeion 库: pip install kerykeion")
     sys.exit(1)
+
+# 设置临时目录作为缓存目录，避免只读文件系统错误
+try:
+    # 创建一个临时目录用于缓存
+    temp_cache_dir = tempfile.mkdtemp(prefix="kerykeion_cache_")
+    os.environ['KERYKEION_CACHE_DIR'] = temp_cache_dir
+    # 也设置一些常见的缓存环境变量
+    os.environ['XDG_CACHE_HOME'] = temp_cache_dir
+    os.environ['TMPDIR'] = temp_cache_dir
+except Exception as e:
+    # 如果无法创建临时目录，继续执行但可能会遇到缓存问题
+    pass
 
 
 def get_current_time():
@@ -37,13 +50,47 @@ def get_current_time():
         }
         return {"success": True, "data": result}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        error_msg = str(e) if e and str(e) else "发生未知错误"
+        error_details = {
+            "error_message": error_msg,
+            "error_type": type(e).__name__ if e else "Unknown",
+            "traceback": traceback.format_exc()
+        }
+        return {"success": False, "error": error_msg, "debug_info": error_details}
 
+
+def load_china_cities():
+    """加载中国城市数据"""
+    try:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        cities_file = os.path.join(script_dir, 'china_cities.json')
+        with open(cities_file, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+def find_city_coordinates(city_name, nation):
+    """查找城市坐标"""
+    if nation == 'CN':
+        china_cities = load_china_cities()
+        # 遍历所有省份和城市
+        for province, cities in china_cities.items():
+            if city_name in cities:
+                city_data = cities[city_name]
+                return city_data['latitude'], city_data['longitude']
+        
+        # 如果没找到，尝试模糊匹配
+        for province, cities in china_cities.items():
+            for city, data in cities.items():
+                if city_name in city or city in city_name:
+                    return data['latitude'], data['longitude']
+    
+    return None, None
 
 def create_astrological_subject(name, year, month, day, hour, minute, city, nation, 
                                longitude=None, latitude=None, tz_str=None,
-                               zodiac_type="Tropical", sidereal_mode="LAHIRI", 
-                               houses_system="P", perspective_type="Apparent Geocentric"):
+                               zodiac_type=None, sidereal_mode=None):
     """创建占星主体对象并返回完整的占星数据
     
     Args:
@@ -60,40 +107,72 @@ def create_astrological_subject(name, year, month, day, hour, minute, city, nati
         tz_str: 时区字符串（可选）
         zodiac_type: 黄道类型 ("Tropical" 或 "Sidereal")
         sidereal_mode: 恒星模式（当 zodiac_type 为 "Sidereal" 时使用）
-        houses_system: 宫位系统
-        perspective_type: 观测视角类型
     
     Returns:
         dict: 包含完整占星数据的字典
     """
     try:
-        # 创建占星主体对象
-        if longitude is not None and latitude is not None:
-            # 使用经纬度
-            if tz_str:
-                subject = AstrologicalSubject(
-                    name, year, month, day, hour, minute,
-                    lng=longitude, lat=latitude, tz_str=tz_str, city=city,
-                    zodiac_type=zodiac_type, sidereal_mode=sidereal_mode,
-                    houses_system=houses_system, perspective_type=perspective_type
-                )
-            else:
-                subject = AstrologicalSubject(
-                    name, year, month, day, hour, minute,
-                    lng=longitude, lat=latitude, city=city,
-                    zodiac_type=zodiac_type, sidereal_mode=sidereal_mode,
-                    houses_system=houses_system, perspective_type=perspective_type
-                )
-        else:
-            # 使用城市名查询
-            subject = AstrologicalSubject(
-                name, year, month, day, hour, minute, city, nation,
-                zodiac_type=zodiac_type, sidereal_mode=sidereal_mode,
-                houses_system=houses_system, perspective_type=perspective_type
-            )
+        # 设置默认值
+        if zodiac_type is None:
+            zodiac_type = "Tropic"
         
-        # 使用 Kerykeion 内置的 JSON 序列化功能
-        astrological_data = subject.json(dump=False)
+        # 如果没有提供经纬度，尝试从本地数据库查找
+        if longitude is None or latitude is None:
+            found_lat, found_lng = find_city_coordinates(city, nation)
+            if found_lat is not None and found_lng is not None:
+                latitude = found_lat
+                longitude = found_lng
+        
+        # 为中国城市设置默认时区
+        if nation == 'CN' and tz_str is None:
+            tz_str = 'Asia/Shanghai'
+        
+        # 设置临时工作目录，避免缓存问题
+        original_cwd = os.getcwd()
+        temp_dir = None
+        
+        try:
+            # 创建临时工作目录
+            temp_dir = tempfile.mkdtemp(prefix="kerykeion_work_")
+            os.chdir(temp_dir)
+            
+            # 创建占星主体对象
+            if longitude is not None and latitude is not None:
+                # 使用经纬度
+                if tz_str:
+                    subject = AstrologicalSubject(
+                        name, year, month, day, hour, minute,
+                        lng=longitude, lat=latitude, tz_str=tz_str, city=city
+                    )
+                else:
+                    subject = AstrologicalSubject(
+                        name, year, month, day, hour, minute,
+                        lng=longitude, lat=latitude, city=city
+                    )
+            else:
+                # 使用城市名查询（作为备选方案）
+                try:
+                    subject = AstrologicalSubject(
+                        name, year, month, day, hour, minute, city, nation
+                    )
+                except Exception as city_error:
+                    # 如果城市查询失败，返回更详细的错误信息
+                    error_msg = str(city_error) if city_error else "未知错误"
+                    raise Exception(f"无法找到城市 '{city}' 的地理信息。请提供经纬度坐标或检查城市名称是否正确。原始错误: {error_msg}")
+            
+            # 使用 Kerykeion 内置的 JSON 序列化功能
+            astrological_data = subject.json(dump=False)
+            
+        finally:
+            # 恢复原始工作目录
+            os.chdir(original_cwd)
+            # 清理临时目录
+            if temp_dir and os.path.exists(temp_dir):
+                try:
+                    import shutil
+                    shutil.rmtree(temp_dir)
+                except:
+                    pass
         
         result = {
             "input": {
@@ -108,17 +187,21 @@ def create_astrological_subject(name, year, month, day, hour, minute, city, nati
                 "longitude": longitude,
                 "latitude": latitude,
                 "tz_str": tz_str,
-                "zodiac_type": zodiac_type,
-                "sidereal_mode": sidereal_mode,
-                "houses_system": houses_system,
-                "perspective_type": perspective_type
+                "used_coordinates": longitude is not None and latitude is not None
             },
             "astrological_data": astrological_data
         }
         
         return {"success": True, "data": result}
     except Exception as e:
-        return {"success": False, "error": str(e)}
+        import traceback
+        error_msg = str(e) if e and str(e) else "发生未知错误"
+        error_details = {
+            "error_message": error_msg,
+            "error_type": type(e).__name__ if e else "Unknown",
+            "traceback": traceback.format_exc()
+        }
+        return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
 def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
@@ -496,23 +579,11 @@ def main():
                                         "zodiac_type": {
                                             "type": "string",
                                             "description": "黄道类型",
-                                            "enum": ["Tropical", "Sidereal"],
-                                            "default": "Tropical"
+                                            "enum": ["Tropical", "Sidereal"]
                                         },
                                         "sidereal_mode": {
                                             "type": "string",
-                                            "description": "恒星模式（当 zodiac_type 为 Sidereal 时使用）",
-                                            "default": "LAHIRI"
-                                        },
-                                        "houses_system": {
-                                            "type": "string",
-                                            "description": "宫位系统",
-                                            "default": "P"
-                                        },
-                                        "perspective_type": {
-                                            "type": "string",
-                                            "description": "观测视角类型",
-                                            "default": "Apparent Geocentric"
+                                            "description": "恒星模式（当 zodiac_type 为 Sidereal 时使用）"
                                         }
                                     },
                                     "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
@@ -697,9 +768,7 @@ def main():
                             arguments.get("latitude"),
                             arguments.get("tz_str"),
                             arguments.get("zodiac_type", "Tropical"),
-                            arguments.get("sidereal_mode", "LAHIRI"),
-                            arguments.get("houses_system", "P"),
-                            arguments.get("perspective_type", "Apparent Geocentric")
+                            arguments.get("sidereal_mode", "LAHIRI")
                         )
                         
                         response = {
