@@ -407,7 +407,18 @@ def get_synastry_aspects(person1_data, person2_data):
             
             # 获取合盘相位
             synastry_aspects = SynastryAspects(subject1, subject2)
-            relevant_aspects = synastry_aspects.relevant_aspects
+            relevant_aspects = synastry_aspects.all_aspects
+            
+            # 将AspectModel对象转换为可序列化的字典
+            serializable_aspects = []
+            for aspect in relevant_aspects:
+                if hasattr(aspect, 'model_dump'):
+                    serializable_aspects.append(aspect.model_dump())
+                elif hasattr(aspect, 'dict'):
+                    serializable_aspects.append(aspect.dict())
+                else:
+                    # 如果是普通字典或其他可序列化对象，直接添加
+                    serializable_aspects.append(aspect)
             
             result = {
                 "person1_input": person1_data,
@@ -415,7 +426,7 @@ def get_synastry_aspects(person1_data, person2_data):
                 "person1_astrological_data": person1_astrological_data,
                 "person2_astrological_data": person2_astrological_data,
                 "aspects_count": len(relevant_aspects),
-                "aspects": relevant_aspects
+                "aspects": serializable_aspects
             }
             
             return {"success": True, "data": result}
