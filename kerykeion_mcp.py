@@ -85,6 +85,12 @@ def find_city_coordinates(city_name, nation):
             for city, data in cities.items():
                 if city_name in city or city in city_name:
                     return data['latitude'], data['longitude']
+        
+        # 特殊处理：丰宁满族自治县属于承德市
+        if '丰宁' in city_name and '河北省' in china_cities:
+            if '承德' in china_cities['河北省']:
+                data = china_cities['河北省']['承德']
+                return data['latitude'], data['longitude']
     
     return None, None
 
@@ -236,7 +242,7 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
         # 如果没有提供经纬度，尝试从本地数据库查找
         if longitude is None or latitude is None:
             coords = find_city_coordinates(city, nation)
-            if coords:
+            if coords and coords[0] is not None and coords[1] is not None:
                 longitude, latitude = coords
         
         # 为中国城市设置默认时区
@@ -267,6 +273,17 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
         natal_aspects = NatalAspects(subject)
         all_aspects = natal_aspects.all_aspects
         
+        # 将AspectModel对象转换为可序列化的字典
+        serializable_aspects = []
+        for aspect in all_aspects:
+            if hasattr(aspect, 'model_dump'):
+                serializable_aspects.append(aspect.model_dump())
+            elif hasattr(aspect, 'dict'):
+                serializable_aspects.append(aspect.dict())
+            else:
+                # 如果是普通字典或其他可序列化对象，直接添加
+                serializable_aspects.append(aspect)
+        
         result = {
             "input": {
                 "name": name,
@@ -283,13 +300,13 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
             },
             "astrological_data": astrological_data,
             "aspects_count": len(all_aspects),
-            "aspects": all_aspects
+            "aspects": serializable_aspects
         }
         
         return {"success": True, "data": result}
     except Exception as e:
         import traceback
-        error_msg = str(e) if e and str(e) else "发生未知错误"
+        error_msg = str(e) if e and str(e) and str(e) != "None" else "发生未知错误"
         error_details = {
             "error_message": error_msg,
             "error_type": type(e).__name__,
