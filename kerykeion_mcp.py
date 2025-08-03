@@ -12,7 +12,6 @@ from datetime import datetime
 
 try:
     from kerykeion import AstrologicalSubject, KerykeionChartSVG
-    from kerykeion import Report
     from kerykeion import SynastryAspects, NatalAspects
     from kerykeion import CompositeSubjectFactory
 except ImportError:
@@ -23,10 +22,22 @@ except ImportError:
 try:
     # 创建一个临时目录用于缓存
     temp_cache_dir = tempfile.mkdtemp(prefix="kerykeion_cache_")
+    
+    # 设置多个可能的缓存环境变量
     os.environ['KERYKEION_CACHE_DIR'] = temp_cache_dir
-    # 也设置一些常见的缓存环境变量
     os.environ['XDG_CACHE_HOME'] = temp_cache_dir
     os.environ['TMPDIR'] = temp_cache_dir
+    os.environ['TMP'] = temp_cache_dir
+    os.environ['TEMP'] = temp_cache_dir
+    os.environ['HOME'] = temp_cache_dir  # 某些库可能使用HOME/.cache
+    
+    # 创建.cache子目录，因为某些库可能期望这个结构
+    cache_subdir = os.path.join(temp_cache_dir, '.cache')
+    os.makedirs(cache_subdir, exist_ok=True)
+    
+    # 设置Python的缓存目录
+    os.environ['PYTHONUSERBASE'] = temp_cache_dir
+    
 except Exception as e:
     # 如果无法创建临时目录，继续执行但可能会遇到缓存问题
     pass
@@ -136,11 +147,32 @@ def create_astrological_subject(name, year, month, day, hour, minute, city, nati
         # 设置临时工作目录，避免缓存问题
         original_cwd = os.getcwd()
         temp_dir = None
+        original_env = {}
         
         try:
             # 创建临时工作目录
             temp_dir = tempfile.mkdtemp(prefix="kerykeion_work_")
             os.chdir(temp_dir)
+            
+            # 备份并重新设置环境变量，确保缓存写入到临时目录
+            env_vars_to_set = {
+                'KERYKEION_CACHE_DIR': temp_dir,
+                'XDG_CACHE_HOME': temp_dir,
+                'TMPDIR': temp_dir,
+                'TMP': temp_dir,
+                'TEMP': temp_dir,
+                'PYTHONUSERBASE': temp_dir
+            }
+            
+            for key, value in env_vars_to_set.items():
+                original_env[key] = os.environ.get(key)
+                os.environ[key] = value
+            
+            # 创建必要的缓存子目录
+            cache_dirs = ['.cache', 'cache', '.kerykeion']
+            for cache_dir in cache_dirs:
+                cache_path = os.path.join(temp_dir, cache_dir)
+                os.makedirs(cache_path, exist_ok=True)
             
             # 创建占星主体对象
             if longitude is not None and latitude is not None:
@@ -172,6 +204,14 @@ def create_astrological_subject(name, year, month, day, hour, minute, city, nati
         finally:
             # 恢复原始工作目录
             os.chdir(original_cwd)
+            
+            # 恢复原始环境变量
+            for key, original_value in original_env.items():
+                if original_value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = original_value
+            
             # 清理临时目录
             if temp_dir and os.path.exists(temp_dir):
                 try:
@@ -233,11 +273,32 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
     # 保存原始工作目录
     original_cwd = os.getcwd()
     temp_dir = None
+    original_env = {}
     
     try:
         # 创建临时目录并设置为工作目录
         temp_dir = tempfile.mkdtemp(prefix="kerykeion_natal_")
         os.chdir(temp_dir)
+        
+        # 备份并重新设置环境变量
+        env_vars_to_set = {
+            'KERYKEION_CACHE_DIR': temp_dir,
+            'XDG_CACHE_HOME': temp_dir,
+            'TMPDIR': temp_dir,
+            'TMP': temp_dir,
+            'TEMP': temp_dir,
+            'PYTHONUSERBASE': temp_dir
+        }
+        
+        for key, value in env_vars_to_set.items():
+            original_env[key] = os.environ.get(key)
+            os.environ[key] = value
+        
+        # 创建必要的缓存子目录
+        cache_dirs = ['.cache', 'cache', '.kerykeion']
+        for cache_dir in cache_dirs:
+            cache_path = os.path.join(temp_dir, cache_dir)
+            os.makedirs(cache_path, exist_ok=True)
         
         # 如果没有提供经纬度，尝试从本地数据库查找
         if longitude is None or latitude is None:
@@ -316,6 +377,14 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
     finally:
         # 恢复原始工作目录
         os.chdir(original_cwd)
+        
+        # 恢复原始环境变量
+        for key, original_value in original_env.items():
+            if original_value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = original_value
+        
         # 清理临时目录
         if temp_dir and os.path.exists(temp_dir):
             try:
@@ -597,72 +666,7 @@ def create_composite_chart(person1_data, person2_data):
         return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
-def generate_report(name, year, month, day, hour, minute, city, nation,
-                   longitude=None, latitude=None, tz_str=None):
-    """生成占星报告
-    
-    Args:
-        name: 姓名
-        year: 年份
-        month: 月份
-        day: 日期
-        hour: 小时
-        minute: 分钟
-        city: 城市名
-        nation: 国家代码
-        longitude: 经度（可选）
-        latitude: 纬度（可选）
-        tz_str: 时区字符串（可选）
-    
-    Returns:
-        dict: 包含占星报告的字典
-    """
-    try:
-        # 创建占星主体对象
-        if longitude is not None and latitude is not None:
-            if tz_str:
-                subject = AstrologicalSubject(
-                    name, year, month, day, hour, minute,
-                    lng=longitude, lat=latitude, tz_str=tz_str, city=city
-                )
-            else:
-                subject = AstrologicalSubject(
-                    name, year, month, day, hour, minute,
-                    lng=longitude, lat=latitude, city=city
-                )
-        else:
-            subject = AstrologicalSubject(
-                name, year, month, day, hour, minute, city, nation
-            )
-        
-        # 使用 Kerykeion 内置的 JSON 序列化功能获取基础数据
-        astrological_data = subject.json()
-        
-        # 生成报告（Report 主要用于打印格式化报告）
-        report = Report(subject)
-        
-        result = {
-            "input": {
-                "name": name,
-                "year": year,
-                "month": month,
-                "day": day,
-                "hour": hour,
-                "minute": minute,
-                "city": city,
-                "nation": nation,
-                "longitude": longitude,
-                "latitude": latitude,
-                "tz_str": tz_str
-            },
-            "astrological_data": astrological_data,
-            "report_available": True,
-            "note": "完整的占星数据已通过 astrological_data 字段提供。如需打印格式的报告，可使用 Kerykeion 的 Report 类。"
-        }
-        
-        return {"success": True, "data": result}
-    except Exception as e:
-        return {"success": False, "error": str(e)}
+
 
 
 def main():
@@ -882,27 +886,6 @@ def main():
                                     },
                                     "required": ["person1_data", "person2_data"]
                                 }
-                            },
-                            {
-                                "name": "generate_report",
-                                "description": "生成详细的占星报告，包含个人星盘的各种信息",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "name": {"type": "string", "description": "姓名"},
-                                        "year": {"type": "integer", "description": "出生年份"},
-                                        "month": {"type": "integer", "description": "出生月份 (1-12)"},
-                                        "day": {"type": "integer", "description": "出生日期 (1-31)"},
-                                        "hour": {"type": "integer", "description": "出生小时 (0-23)"},
-                                        "minute": {"type": "integer", "description": "出生分钟 (0-59)"},
-                                        "city": {"type": "string", "description": "出生城市"},
-                                        "nation": {"type": "string", "description": "国家代码"},
-                                        "longitude": {"type": "number", "description": "经度（可选）"},
-                                        "latitude": {"type": "number", "description": "纬度（可选）"},
-                                        "tz_str": {"type": "string", "description": "时区字符串（可选）"}
-                                    },
-                                    "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                }
                             }
                         ]
                     }
@@ -1054,40 +1037,7 @@ def main():
                             }
                         }
                 
-                elif tool_name == "generate_report":
-                    try:
-                        result = generate_report(
-                            arguments.get("name"),
-                            arguments.get("year"),
-                            arguments.get("month"),
-                            arguments.get("day"),
-                            arguments.get("hour"),
-                            arguments.get("minute"),
-                            arguments.get("city"),
-                            arguments.get("nation"),
-                            arguments.get("longitude"),
-                            arguments.get("latitude"),
-                            arguments.get("tz_str")
-                        )
-                        
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                                "isError": False
-                            }
-                        }
-                    except Exception as e:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": f"生成报告错误: {str(e)}"}],
-                                "isError": True
-                            }
-                        }
-                
+
                 else:
                     response = {
                         "jsonrpc": "2.0",
