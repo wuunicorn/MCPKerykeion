@@ -1,49 +1,25 @@
 #!/usr/bin/env python3
 """
-Kerykeion 占星 MCP 工具
-基于 Kerykeion 库计算星座盘并返回 JSON 结果
+Kerykeion 占星计算核心模块
+
+包含所有占星计算的核心功能函数
 """
 
 import json
-import sys
 import os
 import tempfile
 from datetime import datetime
+from typing import Dict, Any, Optional, Tuple, Union
 
 try:
     from kerykeion import AstrologicalSubject, KerykeionChartSVG
     from kerykeion import SynastryAspects, NatalAspects
     from kerykeion import CompositeSubjectFactory
 except ImportError:
-    print("错误: 请先安装 kerykeion 库: pip install kerykeion")
-    sys.exit(1)
-
-# 设置临时目录作为缓存目录，避免只读文件系统错误
-try:
-    # 创建一个临时目录用于缓存
-    temp_cache_dir = tempfile.mkdtemp(prefix="kerykeion_cache_")
-    
-    # 设置多个可能的缓存环境变量
-    os.environ['KERYKEION_CACHE_DIR'] = temp_cache_dir
-    os.environ['XDG_CACHE_HOME'] = temp_cache_dir
-    os.environ['TMPDIR'] = temp_cache_dir
-    os.environ['TMP'] = temp_cache_dir
-    os.environ['TEMP'] = temp_cache_dir
-    os.environ['HOME'] = temp_cache_dir  # 某些库可能使用HOME/.cache
-    
-    # 创建.cache子目录，因为某些库可能期望这个结构
-    cache_subdir = os.path.join(temp_cache_dir, '.cache')
-    os.makedirs(cache_subdir, exist_ok=True)
-    
-    # 设置Python的缓存目录
-    os.environ['PYTHONUSERBASE'] = temp_cache_dir
-    
-except Exception as e:
-    # 如果无法创建临时目录，继续执行但可能会遇到缓存问题
-    pass
+    raise ImportError("请先安装 kerykeion 库: pip install kerykeion")
 
 
-def get_current_time():
+def get_current_time() -> Dict[str, Any]:
     """获取当前时间并返回格式化结果"""
     try:
         now = datetime.now()
@@ -71,17 +47,20 @@ def get_current_time():
         return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
-def load_china_cities():
+def load_china_cities() -> Dict[str, Any]:
     """加载中国城市数据"""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        cities_file = os.path.join(script_dir, 'china_cities.json')
+        # 向上查找项目根目录
+        project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
+        cities_file = os.path.join(project_root, 'china_cities.json')
         with open(cities_file, 'r', encoding='utf-8') as f:
             return json.load(f)
     except Exception:
         return {}
 
-def find_city_coordinates(city_name, nation):
+
+def find_city_coordinates(city_name: str, nation: str) -> Tuple[Optional[float], Optional[float]]:
     """查找城市坐标"""
     if nation == 'CN':
         china_cities = load_china_cities()
@@ -105,9 +84,22 @@ def find_city_coordinates(city_name, nation):
     
     return None, None
 
-def create_astrological_subject(name, year, month, day, hour, minute, city, nation, 
-                               longitude=None, latitude=None, tz_str=None,
-                               zodiac_type=None, sidereal_mode=None):
+
+def create_astrological_subject(
+    name: str,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    city: str,
+    nation: str,
+    longitude: Optional[float] = None,
+    latitude: Optional[float] = None,
+    tz_str: Optional[str] = None,
+    zodiac_type: Optional[str] = None,
+    sidereal_mode: Optional[str] = None
+) -> Dict[str, Any]:
     """创建占星主体对象并返回完整的占星数据
     
     Args:
@@ -250,8 +242,19 @@ def create_astrological_subject(name, year, month, day, hour, minute, city, nati
         return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
-def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
-                     longitude=None, latitude=None, tz_str=None):
+def get_natal_aspects(
+    name: str,
+    year: int,
+    month: int,
+    day: int,
+    hour: int,
+    minute: int,
+    city: str,
+    nation: str,
+    longitude: Optional[float] = None,
+    latitude: Optional[float] = None,
+    tz_str: Optional[str] = None
+) -> Dict[str, Any]:
     """获取本命相位信息
     
     Args:
@@ -394,7 +397,7 @@ def get_natal_aspects(name, year, month, day, hour, minute, city, nation,
                 pass
 
 
-def get_synastry_aspects(person1_data, person2_data):
+def get_synastry_aspects(person1_data: Dict[str, Any], person2_data: Dict[str, Any]) -> Dict[str, Any]:
     """获取合盘相位信息
     
     Args:
@@ -535,7 +538,7 @@ def get_synastry_aspects(person1_data, person2_data):
         return {"success": False, "error": error_msg, "debug_info": error_details}
 
 
-def create_composite_chart(person1_data, person2_data):
+def create_composite_chart(person1_data: Dict[str, Any], person2_data: Dict[str, Any]) -> Dict[str, Any]:
     """创建组合盘（中点合成盘）
     
     Args:
@@ -664,416 +667,3 @@ def create_composite_chart(person1_data, person2_data):
             "traceback": traceback.format_exc()
         }
         return {"success": False, "error": error_msg, "debug_info": error_details}
-
-
-
-
-
-def main():
-    """主函数 - 处理 MCP 请求"""
-    
-    # 读取标准输入
-    for line in sys.stdin:
-        try:
-            request = json.loads(line.strip())
-            method = request.get("method")
-            params = request.get("params", {})
-            
-            if method == "initialize":
-                # 初始化响应
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": request.get("id"),
-                    "result": {
-                        "protocolVersion": "2024-11-05",
-                        "capabilities": {"tools": {}},
-                        "serverInfo": {
-                            "name": "kerykeion-mcp-server",
-                            "version": "1.0.0",
-                            "description": "Kerykeion 占星计算服务器 - 基于 Kerykeion 库"
-                        }
-                    }
-                }
-            
-            elif method == "tools/list":
-                # 返回可用工具列表
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": request.get("id"),
-                    "result": {
-                        "tools": [
-                            {
-                                "name": "get_current_time",
-                                "description": "获取当前系统时间，返回详细的时间信息",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {},
-                                    "required": []
-                                }
-                            },
-                            {
-                                "name": "create_astrological_subject",
-                                "description": "创建占星主体对象并返回完整的占星数据，包含行星和宫位信息",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "name": {
-                                            "type": "string",
-                                            "description": "姓名"
-                                        },
-                                        "year": {
-                                            "type": "integer",
-                                            "description": "出生年份"
-                                        },
-                                        "month": {
-                                            "type": "integer",
-                                            "description": "出生月份 (1-12)"
-                                        },
-                                        "day": {
-                                            "type": "integer",
-                                            "description": "出生日期 (1-31)"
-                                        },
-                                        "hour": {
-                                            "type": "integer",
-                                            "description": "出生小时 (0-23)"
-                                        },
-                                        "minute": {
-                                            "type": "integer",
-                                            "description": "出生分钟 (0-59)"
-                                        },
-                                        "city": {
-                                            "type": "string",
-                                            "description": "出生城市"
-                                        },
-                                        "nation": {
-                                            "type": "string",
-                                            "description": "国家代码 (如: US, GB, CN)"
-                                        },
-                                        "longitude": {
-                                            "type": "number",
-                                            "description": "经度（可选，提供则不使用城市查询）"
-                                        },
-                                        "latitude": {
-                                            "type": "number",
-                                            "description": "纬度（可选，提供则不使用城市查询）"
-                                        },
-                                        "tz_str": {
-                                            "type": "string",
-                                            "description": "时区字符串（可选，如: Europe/Rome, America/New_York）"
-                                        },
-                                        "zodiac_type": {
-                                            "type": "string",
-                                            "description": "黄道类型",
-                                            "enum": ["Tropical", "Sidereal"]
-                                        },
-                                        "sidereal_mode": {
-                                            "type": "string",
-                                            "description": "恒星模式（当 zodiac_type 为 Sidereal 时使用）"
-                                        }
-                                    },
-                                    "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                }
-                            },
-                            {
-                                "name": "get_natal_aspects",
-                                "description": "获取本命相位信息，分析个人星盘中行星之间的角度关系",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "name": {"type": "string", "description": "姓名"},
-                                        "year": {"type": "integer", "description": "出生年份"},
-                                        "month": {"type": "integer", "description": "出生月份 (1-12)"},
-                                        "day": {"type": "integer", "description": "出生日期 (1-31)"},
-                                        "hour": {"type": "integer", "description": "出生小时 (0-23)"},
-                                        "minute": {"type": "integer", "description": "出生分钟 (0-59)"},
-                                        "city": {"type": "string", "description": "出生城市"},
-                                        "nation": {"type": "string", "description": "国家代码"},
-                                        "longitude": {"type": "number", "description": "经度（可选）"},
-                                        "latitude": {"type": "number", "description": "纬度（可选）"},
-                                        "tz_str": {"type": "string", "description": "时区字符串（可选）"}
-                                    },
-                                    "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                }
-                            },
-                            {
-                                "name": "get_synastry_aspects",
-                                "description": "获取合盘相位信息，分析两个人星盘之间的相位关系",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "person1_data": {
-                                            "type": "object",
-                                            "description": "第一个人的出生信息",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "year": {"type": "integer"},
-                                                "month": {"type": "integer"},
-                                                "day": {"type": "integer"},
-                                                "hour": {"type": "integer"},
-                                                "minute": {"type": "integer"},
-                                                "city": {"type": "string"},
-                                                "nation": {"type": "string"},
-                                                "longitude": {"type": "number"},
-                                                "latitude": {"type": "number"},
-                                                "tz_str": {"type": "string"}
-                                            },
-                                            "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                        },
-                                        "person2_data": {
-                                            "type": "object",
-                                            "description": "第二个人的出生信息",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "year": {"type": "integer"},
-                                                "month": {"type": "integer"},
-                                                "day": {"type": "integer"},
-                                                "hour": {"type": "integer"},
-                                                "minute": {"type": "integer"},
-                                                "city": {"type": "string"},
-                                                "nation": {"type": "string"},
-                                                "longitude": {"type": "number"},
-                                                "latitude": {"type": "number"},
-                                                "tz_str": {"type": "string"}
-                                            },
-                                            "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                        }
-                                    },
-                                    "required": ["person1_data", "person2_data"]
-                                }
-                            },
-                            {
-                                "name": "create_composite_chart",
-                                "description": "创建组合盘（中点合成盘），用于分析两个人的关系",
-                                "inputSchema": {
-                                    "type": "object",
-                                    "properties": {
-                                        "person1_data": {
-                                            "type": "object",
-                                            "description": "第一个人的出生信息",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "year": {"type": "integer"},
-                                                "month": {"type": "integer"},
-                                                "day": {"type": "integer"},
-                                                "hour": {"type": "integer"},
-                                                "minute": {"type": "integer"},
-                                                "city": {"type": "string"},
-                                                "nation": {"type": "string"},
-                                                "longitude": {"type": "number"},
-                                                "latitude": {"type": "number"},
-                                                "tz_str": {"type": "string"}
-                                            },
-                                            "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                        },
-                                        "person2_data": {
-                                            "type": "object",
-                                            "description": "第二个人的出生信息",
-                                            "properties": {
-                                                "name": {"type": "string"},
-                                                "year": {"type": "integer"},
-                                                "month": {"type": "integer"},
-                                                "day": {"type": "integer"},
-                                                "hour": {"type": "integer"},
-                                                "minute": {"type": "integer"},
-                                                "city": {"type": "string"},
-                                                "nation": {"type": "string"},
-                                                "longitude": {"type": "number"},
-                                                "latitude": {"type": "number"},
-                                                "tz_str": {"type": "string"}
-                                            },
-                                            "required": ["name", "year", "month", "day", "hour", "minute", "city", "nation"]
-                                        }
-                                    },
-                                    "required": ["person1_data", "person2_data"]
-                                }
-                            }
-                        ]
-                    }
-                }
-            
-            elif method == "tools/call":
-                # 处理工具调用
-                tool_name = params.get("name")
-                arguments = params.get("arguments", {})
-                
-                if tool_name == "get_current_time":
-                    try:
-                        result = get_current_time()
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                                "isError": False
-                            }
-                        }
-                    except Exception as e:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": f"获取时间错误: {str(e)}"}],
-                                "isError": True
-                            }
-                        }
-                
-                elif tool_name == "create_astrological_subject":
-                    try:
-                        result = create_astrological_subject(
-                            arguments.get("name"),
-                            arguments.get("year"),
-                            arguments.get("month"),
-                            arguments.get("day"),
-                            arguments.get("hour"),
-                            arguments.get("minute"),
-                            arguments.get("city"),
-                            arguments.get("nation"),
-                            arguments.get("longitude"),
-                            arguments.get("latitude"),
-                            arguments.get("tz_str"),
-                            arguments.get("zodiac_type", "Tropical"),
-                            arguments.get("sidereal_mode", "LAHIRI")
-                        )
-                        
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                                "isError": False
-                            }
-                        }
-                    except Exception as e:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": f"创建占星主体错误: {str(e)}"}],
-                                "isError": True
-                            }
-                        }
-                
-                elif tool_name == "get_natal_aspects":
-                    try:
-                        result = get_natal_aspects(
-                            arguments.get("name"),
-                            arguments.get("year"),
-                            arguments.get("month"),
-                            arguments.get("day"),
-                            arguments.get("hour"),
-                            arguments.get("minute"),
-                            arguments.get("city"),
-                            arguments.get("nation"),
-                            arguments.get("longitude"),
-                            arguments.get("latitude"),
-                            arguments.get("tz_str")
-                        )
-                        
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                                "isError": False
-                            }
-                        }
-                    except Exception as e:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": f"获取本命相位错误: {str(e)}"}],
-                                "isError": True
-                            }
-                        }
-                
-                elif tool_name == "get_synastry_aspects":
-                    try:
-                        result = get_synastry_aspects(
-                            arguments.get("person1_data"),
-                            arguments.get("person2_data")
-                        )
-                        
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                                "isError": False
-                            }
-                        }
-                    except Exception as e:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": f"获取合盘相位错误: {str(e)}"}],
-                                "isError": True
-                            }
-                        }
-                
-                elif tool_name == "create_composite_chart":
-                    try:
-                        result = create_composite_chart(
-                            arguments.get("person1_data"),
-                            arguments.get("person2_data")
-                        )
-                        
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": json.dumps(result, ensure_ascii=False, indent=2)}],
-                                "isError": False
-                            }
-                        }
-                    except Exception as e:
-                        response = {
-                            "jsonrpc": "2.0",
-                            "id": request.get("id"),
-                            "result": {
-                                "content": [{"type": "text", "text": f"创建组合盘错误: {str(e)}"}],
-                                "isError": True
-                            }
-                        }
-                
-
-                else:
-                    response = {
-                        "jsonrpc": "2.0",
-                        "id": request.get("id"),
-                        "result": {
-                            "content": [{"type": "text", "text": f"未知工具: {tool_name}"}],
-                            "isError": True
-                        }
-                    }
-            
-            else:
-                response = {
-                    "jsonrpc": "2.0",
-                    "id": request.get("id"),
-                    "error": {"code": -32601, "message": "Method not found"}
-                }
-            
-            # 输出响应
-            print(json.dumps(response, ensure_ascii=False))
-            sys.stdout.flush()
-            
-        except json.JSONDecodeError:
-            print(json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32700, "message": "Parse error"}
-            }, ensure_ascii=False))
-            sys.stdout.flush()
-        except Exception as e:
-            print(json.dumps({
-                "jsonrpc": "2.0",
-                "id": None,
-                "error": {"code": -32603, "message": f"Internal error: {str(e)}"}
-            }, ensure_ascii=False))
-            sys.stdout.flush()
-
-
-if __name__ == "__main__":
-    main()
