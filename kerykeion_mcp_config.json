@@ -2,9 +2,9 @@
   "mcpServers": {
     "kerykeion": {
       "command": "/usr/bin/python3",
-      "args": ["/Users/wuguangxin/Documents/个人工具/MCPKerykeion/kerykeion_mcp.py"],
+      "args": ["-m", "kerykeion_mcp.server"],
       "env": {
-        "PYTHONPATH": "/Users/wuguangxin/Documents/个人工具/MCPKerykeion"
+        "PYTHONPATH": "/Users/wuguangxin/Documents/个人工具/MCPKerykeion/src/"
       }
     }
   }
