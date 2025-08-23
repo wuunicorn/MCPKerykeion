@@ -18,7 +18,7 @@
     "邯郸": {"latitude": 36.6259, "longitude": 114.5391},
     "邢台": {"latitude": 37.0682, "longitude": 114.5047},
     "保定": {"latitude": 38.8671, "longitude": 115.4845},
-    "张家口": {"latitude": 40.7686, "longitude": 114.8864},
+    "张家口": {"latitude": 40.7686, "longitude": 114.8864}, 
     "承德": {"latitude": 40.9515, "longitude": 117.9634},
     "沧州": {"latitude": 38.3037, "longitude": 116.8388},
     "廊坊": {"latitude": 39.5376, "longitude": 116.7161},

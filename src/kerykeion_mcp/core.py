@@ -51,8 +51,8 @@ def load_china_cities() -> Dict[str, Any]:
     """加载中国城市数据"""
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        # 向上查找项目根目录
-        project_root = os.path.dirname(os.path.dirname(os.path.dirname(script_dir)))
+        # 正确计算项目根目录路径
+        project_root = os.path.dirname(os.path.dirname(script_dir))
         cities_file = os.path.join(project_root, 'china_cities.json')
         with open(cities_file, 'r', encoding='utf-8') as f:
             return json.load(f)
@@ -132,9 +132,9 @@ def create_astrological_subject(
                 latitude = found_lat
                 longitude = found_lng
         
-        # 为中国城市设置默认时区
+        # 为中国城市设置默认时区（固定UTC+8，避免夏令时）
         if nation == 'CN' and tz_str is None:
-            tz_str = 'Asia/Shanghai'
+            tz_str = 'Etc/GMT-8'
         
         # 设置临时工作目录，避免缓存问题
         original_cwd = os.getcwd()
@@ -182,9 +182,14 @@ def create_astrological_subject(
             else:
                 # 使用城市名查询（作为备选方案）
                 try:
-                    subject = AstrologicalSubject(
-                        name, year, month, day, hour, minute, city, nation
-                    )
+                    if tz_str:
+                        subject = AstrologicalSubject(
+                            name, year, month, day, hour, minute, city, nation, tz_str=tz_str
+                        )
+                    else:
+                        subject = AstrologicalSubject(
+                            name, year, month, day, hour, minute, city, nation
+                        )
                 except Exception as city_error:
                     # 如果城市查询失败，返回更详细的错误信息
                     error_msg = str(city_error) if city_error else "未知错误"
@@ -309,9 +314,9 @@ def get_natal_aspects(
             if coords and coords[0] is not None and coords[1] is not None:
                 longitude, latitude = coords
         
-        # 为中国城市设置默认时区
+        # 为中国城市设置默认时区（固定UTC+8，避免夏令时）
         if nation == 'CN' and not tz_str:
-            tz_str = 'Asia/Shanghai'
+            tz_str = 'Etc/GMT-8'
         
         # 创建占星主体对象
         if longitude is not None and latitude is not None:
@@ -422,9 +427,9 @@ def get_synastry_aspects(person1_data: Dict[str, Any], person2_data: Dict[str, A
             p2 = person2_data.copy()
             
             if p1.get('nation') == 'CN' and not p1.get('tz_str'):
-                p1['tz_str'] = 'Asia/Shanghai'
+                p1['tz_str'] = 'Etc/GMT-8'
             if p2.get('nation') == 'CN' and not p2.get('tz_str'):
-                p2['tz_str'] = 'Asia/Shanghai'
+                p2['tz_str'] = 'Etc/GMT-8'
             
             # 创建第一个人的占星主体对象
             if p1.get('longitude') is not None and p1.get('latitude') is not None:
@@ -563,9 +568,9 @@ def create_composite_chart(person1_data: Dict[str, Any], person2_data: Dict[str,
             p2 = person2_data.copy()
             
             if p1.get('nation') == 'CN' and not p1.get('tz_str'):
-                p1['tz_str'] = 'Asia/Shanghai'
+                p1['tz_str'] = 'Etc/GMT-8'
             if p2.get('nation') == 'CN' and not p2.get('tz_str'):
-                p2['tz_str'] = 'Asia/Shanghai'
+                p2['tz_str'] = 'Etc/GMT-8'
             
             # 创建第一个人的占星主体对象
             if p1.get('longitude') is not None and p1.get('latitude') is not None:
